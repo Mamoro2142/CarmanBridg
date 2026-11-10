@@ -1,0 +1,89 @@
+name: Karman Android — test and build
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: karman-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Unpack source ZIP for mobile-only GitHub setup (optional)
+        shell: bash
+        run: |
+          if [ ! -f settings.gradle.kts ] && [ -f Karman-1.0.0-source.zip ]; then
+            unzip -q Karman-1.0.0-source.zip
+          fi
+          test -f settings.gradle.kts
+          test -f app/build.gradle.kts
+      - name: Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Android SDK
+        uses: android-actions/setup-android@v3
+      - name: SDK platform 35
+        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+      - name: Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Restore private signing key from GitHub secrets
+        if: github.event_name != 'pull_request'
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KARMAN_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.KARMAN_STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KARMAN_KEY_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KARMAN_KEY_ALIAS }}
+        shell: bash
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ] && [ -n "$STORE_PASSWORD" ] && [ -n "$KEY_PASSWORD" ] && [ -n "$KEY_ALIAS" ]; then
+            printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/karman-release.p12"
+            test -s "$RUNNER_TEMP/karman-release.p12"
+            echo "KARMAN_KEYSTORE_PATH=$RUNNER_TEMP/karman-release.p12" >> "$GITHUB_ENV"
+            echo "KARMAN_STORE_PASSWORD=$STORE_PASSWORD" >> "$GITHUB_ENV"
+            echo "KARMAN_KEY_PASSWORD=$KEY_PASSWORD" >> "$GITHUB_ENV"
+            echo "KARMAN_KEY_ALIAS=$KEY_ALIAS" >> "$GITHUB_ENV"
+            echo "KARMAN_HAS_SIGNING=true" >> "$GITHUB_ENV"
+          else
+            echo "No release signing secrets. Only debug APK will be generated."
+          fi
+      - name: Unit tests, lint, and debug APK
+        run: gradle --no-daemon --console=plain :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
+      - name: Upload debug APK (not stable for future updates)
+        uses: actions/upload-artifact@v4
+        with:
+          name: Karman-1.0.0-DEBUG-not-for-updates
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+      - name: Assemble privately signed release APK
+        if: env.KARMAN_HAS_SIGNING == 'true'
+        run: gradle --no-daemon --console=plain :app:assembleRelease
+      - name: Upload installable signed release APK
+        if: env.KARMAN_HAS_SIGNING == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Karman-1.0.0-RELEASE-signed
+          path: app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
+      - name: Reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Karman-verification-reports
+          path: |
+            app/build/reports/tests/
+            app/build/reports/lint-results-debug.html
+          if-no-files-found: ignore
