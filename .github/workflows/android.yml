@@ -19,12 +19,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      - name: Unpack source ZIP for mobile-only GitHub setup (optional)
+      - name: Verify project files
         shell: bash
         run: |
-          if [ ! -f settings.gradle.kts ] && [ -f Karman-1.0.0-source.zip ]; then
-            unzip -q Karman-1.0.0-source.zip
-          fi
           test -f settings.gradle.kts
           test -f app/build.gradle.kts
       - name: Fix known Kotlin compilation errors (CI only)
@@ -60,10 +57,8 @@ jobs:
       - name: Apply Karman 1.0.1 source upgrade
         shell: bash
         run: |
-          test -f Karman-1.0.1-upgrade.zip || { echo "Upload Karman-1.0.1-upgrade.zip to the repository root"; exit 1; }
-          mkdir -p "$RUNNER_TEMP/karman-upgrade"
-          unzip -q -o Karman-1.0.1-upgrade.zip -d "$RUNNER_TEMP/karman-upgrade"
-          python3 "$RUNNER_TEMP/karman-upgrade/apply_upgrade.py"
+          test -f apply_upgrade.py || { echo "Missing apply_upgrade.py in repository root"; exit 1; }
+          python3 apply_upgrade.py
           grep -q 'versionCode = 2' app/build.gradle.kts
       - name: Java 17
         uses: actions/setup-java@v4
